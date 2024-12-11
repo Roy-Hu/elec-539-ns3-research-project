@@ -14,7 +14,7 @@
     }
 
 #include "tcp-socket-base.h"
-
+#include "../../scratch/Swift/my-delay-tag.h"
 #include "ipv4-end-point.h"
 #include "ipv4-route.h"
 #include "ipv4-routing-protocol.h"
@@ -80,6 +80,15 @@ const std::map<std::pair<ns3::TcpSocketBase::TcpPacketType_t, ns3::TcpSocketStat
         {{ns3::TcpSocketBase::RST, ns3::TcpSocketState::DctcpEcn}, true},
         {{ns3::TcpSocketBase::RE_XMT, ns3::TcpSocketState::DctcpEcn}, true},
         {{ns3::TcpSocketBase::DATA, ns3::TcpSocketState::DctcpEcn}, true},
+
+        {{ns3::TcpSocketBase::SYN, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::SYN_ACK, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::PURE_ACK, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::WINDOW_PROBE, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::FIN, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::RST, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::RE_XMT, ns3::TcpSocketState::SwiftEcn}, true},
+        {{ns3::TcpSocketBase::DATA, ns3::TcpSocketState::SwiftEcn}, true},
     };
 } // namespace
 
@@ -1242,6 +1251,22 @@ TcpSocketBase::ForwardUp(Ptr<Packet> packet,
              m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED)
     {
         m_congestionControl->CwndEvent(m_tcb, TcpSocketState::CA_EVENT_ECN_NO_CE);
+    }
+
+    MyDelayTag delayTag;
+    if (packet->PeekPacketTag(delayTag))
+    {
+        uint64_t maxDelayNs = delayTag.GetMaxDelay();
+        // Since we have m_tcb available here, we can update m_maxDelay
+        if (m_tcb)
+        {
+            if (maxDelayNs > m_tcb->m_maxDelay)
+            {
+                m_tcb->m_maxDelay = maxDelayNs;
+            }
+
+            m_tcb->m_hops = delayTag.GetHops();
+        }
     }
 
     DoForwardUp(packet, fromAddress, toAddress);
@@ -3123,8 +3148,10 @@ TcpSocketBase::AddSocketTags(const Ptr<Packet>& p, bool isEct) const
     }
     else
     {
-        if ((m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && p->GetSize() > 0 && isEct) ||
-            m_tcb->m_ecnMode == TcpSocketState::DctcpEcn)
+        if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && p->GetSize() > 0 &&
+            (m_tcb->m_ecnMode == TcpSocketState::DctcpEcn ||
+            m_tcb->m_ecnMode == TcpSocketState::SwiftEcn ||
+            isEct))
         {
             SocketIpTosTag ipTosTag;
             ipTosTag.SetTos(MarkEcnCodePoint(GetIpTos(), m_tcb->m_ectCodePoint));
@@ -3135,8 +3162,7 @@ TcpSocketBase::AddSocketTags(const Ptr<Packet>& p, bool isEct) const
     if (IsManualIpv6Tclass())
     {
         SocketIpv6TclassTag ipTclassTag;
-        if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && !CheckNoEcn(GetIpv6Tclass()) &&
-            isEct)
+        if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && !CheckNoEcn(GetIpv6Tclass()) && isEct)
         {
             ipTclassTag.SetTclass(MarkEcnCodePoint(GetIpv6Tclass(), m_tcb->m_ectCodePoint));
         }
@@ -3149,8 +3175,10 @@ TcpSocketBase::AddSocketTags(const Ptr<Packet>& p, bool isEct) const
     }
     else
     {
-        if ((m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && p->GetSize() > 0 && isEct) ||
-            m_tcb->m_ecnMode == TcpSocketState::DctcpEcn)
+        if (m_tcb->m_ecnState != TcpSocketState::ECN_DISABLED && p->GetSize() > 0 &&
+            (m_tcb->m_ecnMode == TcpSocketState::DctcpEcn ||
+            m_tcb->m_ecnMode == TcpSocketState::SwiftEcn ||
+            isEct))
         {
             SocketIpv6TclassTag ipTclassTag;
             ipTclassTag.SetTclass(MarkEcnCodePoint(GetIpv6Tclass(), m_tcb->m_ectCodePoint));
@@ -4838,4 +4866,9 @@ RttHistory::RttHistory(const RttHistory& h)
 {
 }
 
+Ptr<TcpSocketState>
+TcpSocketBase::GetTcb ()
+{
+  return m_tcb;
+}
 } // namespace ns3

@@ -127,6 +127,7 @@ class TcpSocketState : public Object
         ClassicEcn, //!< ECN functionality as described in RFC 3168.
         DctcpEcn,   //!< ECN functionality as described in RFC 8257. Note: this mode is specific to
                     //!< DCTCP.
+        SwiftEcn,
     };
 
     /**
@@ -235,6 +236,9 @@ class TcpSocketState : public Object
      * Callback to send an empty packet
      */
     Callback<void, uint8_t> m_sendEmptyPacketCallback;
+    uint64_t m_maxDelay;
+    uint64_t m_target_delay;
+    uint64_t m_hops;
 };
 
 namespace TracedValueCallback

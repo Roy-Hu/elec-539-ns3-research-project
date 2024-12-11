@@ -7,6 +7,7 @@
 //
 
 #include "ipv4-l3-protocol.h"
+#include "../../scratch/Swift/my-delay-tag.h" // Include the custom tag header
 
 #include "arp-cache.h"
 #include "arp-l3-protocol.h"
@@ -639,6 +640,42 @@ Ipv4L3Protocol::Receive(Ptr<NetDevice> device,
         Ptr<Ipv4RawSocketImpl> socket = *i;
         socket->ForwardUp(packet, ipHeader, ipv4Interface);
     }
+
+    // ********** TAG HANDLING **********
+    Time now = Simulator::Now();
+    MyDelayTag delayTag;
+    if (!packet->PeekPacketTag(delayTag))
+    {
+        // No tag present, first hop:
+        // Initialize lastHopTimestamp to now, and maxDelay = 0
+        delayTag.SetLastHopTimestamp(now.GetNanoSeconds());
+        delayTag.SetMaxDelay(0);
+        packet->AddPacketTag(delayTag);
+        delayTag.AddHops();
+    }
+    else
+    {
+        // Tag present, compute per-hop delay
+        uint64_t lastHopTs = delayTag.GetLastHopTimestamp();
+        Time lastHopTime = NanoSeconds(lastHopTs);
+        Time perHopDelay = now - lastHopTime;
+
+        // Update max delay if needed
+        uint64_t currentMax = delayTag.GetMaxDelay();
+        uint64_t newDelay = perHopDelay.GetNanoSeconds();
+        if (newDelay > currentMax)
+        {
+            currentMax = newDelay;
+        }
+
+        // Update tag values
+        delayTag.SetLastHopTimestamp(now.GetNanoSeconds());
+        delayTag.SetMaxDelay(currentMax);
+        delayTag.AddHops();
+        // Replace existing tag with updated values
+        packet->ReplacePacketTag(delayTag);
+    }
+    // ********** END TAG HANDLING **********
 
     if (m_enableDpd && ipHeader.GetDestination().IsMulticast() && UpdateDuplicate(packet, ipHeader))
     {

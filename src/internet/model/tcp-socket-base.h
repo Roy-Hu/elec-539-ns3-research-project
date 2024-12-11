@@ -208,6 +208,7 @@ class RttHistory
 class TcpSocketBase : public TcpSocket
 {
   public:
+     Ptr<TcpSocketState> GetTcb ();
     /**
      * Get the type ID.
      * \brief Get the type ID.
