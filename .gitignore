@@ -6,7 +6,8 @@
 *.o
 *.pyc
 *.pyo
-
+*dat
+*png
 *.cwnd
 *.dat
 *.log

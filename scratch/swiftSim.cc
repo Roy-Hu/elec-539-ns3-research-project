@@ -100,7 +100,7 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/applications-module.h"
 #include "ns3/traffic-control-module.h"
-#include "swift.h"
+// #include "ns3/tcp-swift.h"
 
 using namespace ns3;
 
@@ -119,6 +119,7 @@ std::vector<uint64_t> rxS3R1Bytes;
 
 static std::vector<Ptr<TcpSocketState>> g_tcbs;
 
+
 void
 PrintProgress (Time interval)
 {
@@ -130,11 +131,9 @@ PrintProgress (Time interval)
       if (tcb)
         {
           double rttNsSmoothed = tcb->m_srtt.Get().GetNanoSeconds();
-          uint64_t maxDelay = tcb->m_maxDelay; 
           std::cout << "Flow " << i
                     << " srtt=" << rttNsSmoothed
-                    << " ns, targetDelay=" << tcb->m_target_delay
-                    << " ns, maxDelay=" << maxDelay << " ns, CWND: " << tcb->m_cWnd
+                    << " ns, CWND: " << tcb->m_cWnd
                     << ", Hops: " << tcb->m_hops << std::endl;
 
         }
@@ -307,16 +306,35 @@ CheckT2QueueSize (Ptr<QueueDisc> queue)
   Simulator::Schedule (MilliSeconds (100), &CheckT2QueueSize, queue);
 }
 
-static std::vector<Ptr<Swift>> g_swiftFlows;
+static std::vector<ns3::Ptr<ns3::TcpSwift>> g_swiftFlows;
 
-void RetrieveTcb (Ptr<OnOffApplication> onoffApp, uint32_t flowIndex)
+void
+RetrieveTcb (Ptr<OnOffApplication> onoffApp, uint32_t flowIndex)
 {
   Ptr<Socket> sock = onoffApp->GetSocket();
   Ptr<TcpSocketBase> tcpSocketBase = DynamicCast<TcpSocketBase>(sock);
   if (tcpSocketBase)
     {
+
+  Ptr<TcpSwift> swift = CreateObject<TcpSwift>();
+  swift->SetFlowIndex(flowIndex);  // Assign flow index
+  tcpSocketBase->SetCongestionControlAlgorithm(swift);
+
+      // Store the TCB (if needed)
       g_tcbs.push_back(tcpSocketBase->GetTcb());
       std::cout << "TCB retrieved for flow " << flowIndex << std::endl;
+      
+      // // Open a unique file for this flow
+      // // e.g., cwnd-flow0.dat, cwnd-flow1.dat, ...
+      // std::ostringstream fname;
+      // fname << "./scratch/cwnd-flow" << flowIndex << ".dat";
+      // g_cwndFiles[flowIndex].open(fname.str().c_str(), std::ios::out);
+      // g_cwndFiles[flowIndex] << "#Time(s) Cwnd(bytes)\n";
+
+      // // Connect the CongestionWindow trace for this flow
+      // // Use a bound callback to pass the flowIndex
+      // tcpSocketBase->TraceConnectWithoutContext("CongestionWindow",
+      //                                     MakeBoundCallback(&CwndTracer, flowIndex));
     }
   else
     {
@@ -327,9 +345,9 @@ void RetrieveTcb (Ptr<OnOffApplication> onoffApp, uint32_t flowIndex)
 int main (int argc, char *argv[])
 {
   std::string outputFilePath = ".";
-  std::string tcpTypeId = "Swift";
+  std::string tcpTypeId = "TcpSwift";
   Time flowStartupWindow = Seconds (1);
-  Time convergenceTime = Seconds (1);
+  Time convergenceTime = Seconds (0);
   Time measurementWindow = Seconds (1);
   bool enableSwitchEcn = true;
   Time progressInterval = MilliSeconds (100);
@@ -357,13 +375,13 @@ int main (int argc, char *argv[])
 
   // Adjust stopTime to accommodate all measurements
   Time totalMeasurementTime = measurementInterval * numMeasurements;
-  Time stopTime = flowStartupWindow + convergenceTime + totalMeasurementTime + Seconds (1); // Extra second
+  Time stopTime = Seconds(15.0);
   
   Time clientStartTime = startTime;
 
-  rxS1R1Bytes.reserve (1);
-  rxS2R2Bytes.reserve (1);
-  rxS3R1Bytes.reserve (1);
+  rxS1R1Bytes.resize(1, 0);
+  rxS2R2Bytes.resize(1, 0);
+  rxS3R1Bytes.resize(1, 0);
 
   NodeContainer S1, S2, S3, R2;
   Ptr<Node> T1 = CreateObject<Node> ();
@@ -515,6 +533,15 @@ int main (int argc, char *argv[])
 
   Ipv4GlobalRoutingHelper::PopulateRoutingTables ();
 
+  // For the S2->R2 flow:
+  uint32_t s2r2FlowId = 0;  // First flow
+
+  // For the S1->R1 flow:
+  uint32_t s1r1FlowId = 1;  // Second flow
+
+  // For the S3->R1 flow:
+  uint32_t s3r1FlowId = 2;  // Third flow
+
   // Each sender in S2 sends to a receiver in R2
   std::vector<Ptr<PacketSink> > r2Sinks;
   r2Sinks.reserve (1);
@@ -543,12 +570,12 @@ int main (int argc, char *argv[])
       clientApps1.Add (clientHelper1.Install (S2.Get (i)));
     //   clientApps1.Start (i * flowStartupWindow / 1  + clientStartTime + MilliSeconds (i * 5));
     //   clientApps1.Stop (stopTime);
-      clientApps1.Start (Seconds (3));
+      clientApps1.Start (Seconds (8));
       clientApps1.Stop (stopTime);
 
            // Schedule retrieving the TCB after the OnOffApplication starts
       Ptr<OnOffApplication> onoff = clientApps1.Get(0)->GetObject<OnOffApplication>();
-      Simulator::Schedule(Seconds(3.1), &RetrieveTcb, onoff, i);
+      Simulator::Schedule(Seconds(8.1), &RetrieveTcb, onoff, s2r2FlowId);
     }
 
   // Each sender in S1 and S3 sends to R1
@@ -600,7 +627,12 @@ int main (int argc, char *argv[])
 
       // If you want to retrieve TCB for these flows as well, schedule similarly:
       Ptr<OnOffApplication> onoff = clientApps1.Get(0)->GetObject<OnOffApplication>();
-      Simulator::Schedule((i == 0) ? Seconds(1.1) : Seconds(1.1), &RetrieveTcb, onoff, i+10); 
+
+      if (i == 0) {
+        Simulator::Schedule(Seconds(0.1), &RetrieveTcb, onoff, s1r1FlowId);
+      } else {
+        Simulator::Schedule(Seconds(0.1), &RetrieveTcb, onoff, s3r1FlowId);
+      }
       // Adjust time as needed for application start
     }
 
